@@ -10,6 +10,7 @@
             --secondary-color: #34a853;
             --accent-color: #fbbc05;
             --danger-color: #ea4335;
+            --warning-color: #f39c12;
             --dark-color: #202124;
             --light-color: #f8f9fa;
             --border-radius: 12px;
@@ -42,42 +43,51 @@
             border-radius: var(--border-radius);
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.2);
+            margin: 20px;
         }
 
         h1 {
             color: var(--accent-color);
             margin-bottom: 20px;
-            font-size: 2.5em;
+            font-size: 2.2em;
         }
 
         .status {
-            padding: 15px;
+            padding: 20px;
             border-radius: var(--border-radius);
             margin: 20px 0;
             font-weight: bold;
+            border: 2px solid;
+            transition: var(--transition);
         }
 
         .status.active {
             background: rgba(52, 168, 83, 0.2);
-            border: 1px solid var(--secondary-color);
+            border-color: var(--secondary-color);
             color: var(--secondary-color);
         }
 
         .status.inactive {
             background: rgba(234, 67, 53, 0.2);
-            border: 1px solid var(--danger-color);
+            border-color: var(--danger-color);
             color: var(--danger-color);
+        }
+
+        .status.warning {
+            background: rgba(243, 156, 18, 0.2);
+            border-color: var(--warning-color);
+            color: var(--warning-color);
         }
 
         .time-info {
             background: rgba(255, 255, 255, 0.1);
-            padding: 15px;
+            padding: 20px;
             border-radius: var(--border-radius);
-            margin: 15px 0;
+            margin: 20px 0;
         }
 
         .btn {
-            padding: 12px 30px;
+            padding: 15px 30px;
             border: none;
             border-radius: var(--border-radius);
             font-size: 16px;
@@ -87,6 +97,7 @@
             margin: 10px;
             text-decoration: none;
             display: inline-block;
+            min-width: 150px;
         }
 
         .btn-primary {
@@ -99,23 +110,90 @@
             color: white;
         }
 
-        .btn:hover {
-            transform: translateY(-2px);
+        .btn-warning {
+            background: var(--warning-color);
+            color: white;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .btn:hover:not(:disabled) {
+            transform: translateY(-3px);
             box-shadow: var(--box-shadow);
         }
 
         .admin-link {
-            margin-top: 20px;
-            padding: 10px 20px;
+            margin-top: 25px;
+            padding: 12px 25px;
             background: #8e44ad;
             color: white;
             border-radius: var(--border-radius);
             text-decoration: none;
             display: inline-block;
+            transition: var(--transition);
+        }
+
+        .admin-link:hover {
+            background: #7d3c98;
+            transform: translateY(-2px);
+        }
+
+        .sync-status {
+            margin-top: 15px;
+            font-size: 12px;
+            color: #ccc;
+            opacity: 0.8;
+        }
+
+        .broadcast-message {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            background: var(--warning-color);
+            color: white;
+            padding: 15px;
+            text-align: center;
+            z-index: 1000;
+            font-weight: bold;
+            animation: slideDown 0.5s ease;
+        }
+
+        @keyframes slideDown {
+            from { transform: translateY(-100%); }
+            to { transform: translateY(0); }
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            background: var(--primary-color);
+            color: white;
+            border-radius: var(--border-radius);
+            z-index: 1000;
+            transform: translateX(150%);
+            transition: transform 0.3s ease;
+            box-shadow: var(--box-shadow);
+        }
+
+        .notification.show {
+            transform: translateX(0);
         }
     </style>
 </head>
 <body>
+    <!-- Broadcast Message -->
+    <div id="broadcastMessage" class="broadcast-message" style="display: none;"></div>
+
+    <!-- Notification -->
+    <div id="notification" class="notification"></div>
+
     <div class="container">
         <h1>👥 SPIMF SYSTEM</h1>
         <p>Sistem Pengurusan Identiti Membership FareezOnzz</p>
@@ -128,10 +206,13 @@
             <h3>⏰ Waktu Operasi</h3>
             <p>6:00 Pagi - 12:00 Malam</p>
             <p id="currentTime">Loading masa...</p>
+            <div class="sync-status">
+                Sync Status: <span id="syncStatus">Menyambung...</span>
+            </div>
         </div>
 
         <div>
-            <button class="btn btn-primary" onclick="enterSystem()">
+            <button class="btn btn-primary" id="enterSystemBtn" onclick="enterSystem()">
                 🚀 Masuk Sistem
             </button>
             <button class="btn btn-secondary" onclick="showAbout()">
@@ -142,31 +223,119 @@
         <a href="https://spimf-admin.vercel.app/" class="admin-link" target="_blank">
             🛡️ Akses Sistem Admin
         </a>
+
+        <div class="sync-status">
+            Last Update: <span id="lastUpdate">-</span>
+        </div>
     </div>
 
     <script>
-        // Check waktu operasi
+        // System Configuration
+        const CONFIG = {
+            ADMIN_URL: 'https://spimf-admin.vercel.app',
+            SYNC_INTERVAL: 3000, // 3 seconds
+            OPERATION_HOURS: { start: 6, end: 24 } // 6 AM to 12 AM
+        };
+
+        // System State
+        let systemState = {
+            status: 'active',
+            blocked: false,
+            blockReason: '',
+            lastSync: null,
+            broadcastMessage: ''
+        };
+
+        // DOM Elements
+        const statusElement = document.getElementById('statusMessage');
+        const currentTimeElement = document.getElementById('currentTime');
+        const syncStatusElement = document.getElementById('syncStatus');
+        const lastUpdateElement = document.getElementById('lastUpdate');
+        const enterSystemBtn = document.getElementById('enterSystemBtn');
+        const broadcastMessageElement = document.getElementById('broadcastMessage');
+        const notificationElement = document.getElementById('notification');
+
+        // Show notification
+        function showNotification(message, type = 'info') {
+            const colors = {
+                info: '#1a73e8',
+                success: '#34a853',
+                warning: '#f39c12',
+                error: '#ea4335'
+            };
+            
+            notificationElement.style.background = colors[type] || colors.info;
+            notificationElement.textContent = message;
+            notificationElement.classList.add('show');
+            
+            setTimeout(() => {
+                notificationElement.classList.remove('show');
+            }, 5000);
+        }
+
+        // Show broadcast message
+        function showBroadcast(message) {
+            if (!message) return;
+            
+            broadcastMessageElement.textContent = `📢 PENGUMUMAN: ${message}`;
+            broadcastMessageElement.style.display = 'block';
+            
+            setTimeout(() => {
+                broadcastMessageElement.style.display = 'none';
+            }, 10000);
+        }
+
+        // Check URL parameters for admin commands
+        function checkUrlParameters() {
+            const urlParams = new URLSearchParams(window.location.search);
+            
+            const command = urlParams.get('command');
+            const reason = urlParams.get('reason');
+            const message = urlParams.get('message');
+            
+            if (command === 'block' && reason) {
+                systemState.blocked = true;
+                systemState.blockReason = reason;
+                systemState.status = 'blocked';
+                updateSystemDisplay();
+                showNotification(`Sistem telah di-block oleh admin: ${reason}`, 'error');
+                
+                // Remove parameters from URL without reload
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+            else if (command === 'unblock') {
+                systemState.blocked = false;
+                systemState.blockReason = '';
+                systemState.status = 'active';
+                updateSystemDisplay();
+                showNotification('Sistem telah diaktifkan oleh admin', 'success');
+                
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+            else if (command === 'broadcast' && message) {
+                showBroadcast(decodeURIComponent(message));
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        }
+
+        // Check system time
         function checkSystemTime() {
             const now = new Date();
             const currentHour = now.getHours();
             const currentMinute = now.getMinutes();
             const currentTime = currentHour * 60 + currentMinute;
             
-            // Waktu operasi: 6:00 AM - 24:00 (6 pagi - 12 malam)
-            const startTime = 6 * 60;   // 6:00 AM
-            const endTime = 24 * 60;    // 12:00 AM
+            const startTime = CONFIG.OPERATION_HOURS.start * 60;
+            const endTime = CONFIG.OPERATION_HOURS.end * 60;
             
             const isOperational = currentTime >= startTime && currentTime < endTime;
-            
-            const statusElement = document.getElementById('statusMessage');
-            const currentTimeElement = document.getElementById('currentTime');
             
             // Update current time display
             currentTimeElement.textContent = now.toLocaleTimeString('ms-MY');
             
-            if (!isOperational) {
-                statusElement.className = 'status inactive';
-                statusElement.innerHTML = '❌ Sistem Ditutup<br><small>Buka: 6:00 Pagi - 12:00 Malam</small>';
+            if (!isOperational && !systemState.blocked) {
+                systemState.status = 'inactive';
+                updateSystemDisplay();
                 
                 // Calculate time until next opening
                 let timeUntilOpen;
@@ -180,36 +349,117 @@
                 const minutes = timeUntilOpen % 60;
                 
                 statusElement.innerHTML += `<br><small>Buka semula dalam: ${hours} jam ${minutes} minit</small>`;
-                
-                // Disable enter button
-                document.querySelector('.btn-primary').style.opacity = '0.5';
-                document.querySelector('.btn-primary').style.pointerEvents = 'none';
-            } else {
-                statusElement.className = 'status active';
-                statusElement.innerHTML = '✅ Sistem Aktif - Sedia Digunakan';
             }
         }
 
-        // Update time every minute
-        function updateTime() {
-            checkSystemTime();
-            setInterval(checkSystemTime, 60000);
+        // Update system display based on state
+        function updateSystemDisplay() {
+            if (systemState.blocked) {
+                statusElement.className = 'status inactive';
+                statusElement.innerHTML = `🚫 SISTEM DI BLOCK OLEH ADMIN<br>
+                                          <small>Sebab: ${systemState.blockReason}</small><br>
+                                          <small>Hubungi admin untuk bantuan</small>`;
+                
+                enterSystemBtn.disabled = true;
+                enterSystemBtn.innerHTML = '⛔ Sistem Dikunci';
+            }
+            else if (systemState.status === 'inactive') {
+                statusElement.className = 'status inactive';
+                statusElement.innerHTML = '❌ Sistem Ditutup<br><small>Buka: 6:00 Pagi - 12:00 Malam</small>';
+                
+                enterSystemBtn.disabled = true;
+                enterSystemBtn.innerHTML = '⏰ Luar Waktu Operasi';
+            }
+            else {
+                statusElement.className = 'status active';
+                statusElement.innerHTML = '✅ Sistem Aktif - Sedia Digunakan';
+                
+                enterSystemBtn.disabled = false;
+                enterSystemBtn.innerHTML = '🚀 Masuk Sistem';
+            }
+        }
+
+        // Sync with admin system
+        async function syncWithAdmin() {
+            try {
+                // Simulate API call to admin system
+                // In real implementation, this would be a proper API call
+                const timestamp = new Date().toISOString();
+                
+                // Update sync status
+                syncStatusElement.textContent = 'Disambung';
+                syncStatusElement.style.color = '#34a853';
+                lastUpdateElement.textContent = new Date().toLocaleTimeString('ms-MY');
+                
+                // Check for admin commands via URL
+                checkUrlParameters();
+                
+            } catch (error) {
+                console.error('Sync error:', error);
+                syncStatusElement.textContent = 'Sambungan Terputus';
+                syncStatusElement.style.color = '#ea4335';
+            }
         }
 
         // System functions
         function enterSystem() {
-            alert('Sistem utama untuk ahli - semua fungsi tersedia!');
-            // Di sini Anda boleh redirect ke halaman utama sistem
-            window.location.href = '#main-system'; // Ganti dengan URL sebenar
+            if (systemState.blocked || systemState.status === 'inactive') {
+                showNotification('Sistem tidak boleh diakses sekarang', 'error');
+                return;
+            }
+            
+            showNotification('Memasuki sistem utama...', 'success');
+            // Here you would redirect to the main system
+            // window.location.href = 'main-system.html';
+            
+            // Simulate system entry
+            setTimeout(() => {
+                alert('Sistem utama untuk ahli - semua fungsi tersedia!\n\nFitur:\n• Pengumuman Personal\n• Janakan IKAP\n• Analisis Data\n• Komuniti SPIMF');
+            }, 1000);
         }
 
         function showAbout() {
-            alert('SPIMF System - Dibangunkan oleh FareezOnzz\n\nSistem Pengurusan Identiti Membership');
+            alert('SPIMF SYSTEM\n\nSistem Pengurusan Identiti Membership FareezOnzz\n\nDibangunkan oleh:\n• Development Of Fareezonzz\n• Dev1Fonzz\n\nContact: pfareezonzz01@gmail.com');
         }
 
-        // Initialize
+        // Generate admin command URL (for testing)
+        function generateAdminCommand() {
+            const commands = [
+                `${CONFIG.ADMIN_URL}?command=block&reason=Maintenance`,
+                `${CONFIG.ADMIN_URL}?command=unblock`,
+                `${CONFIG.ADMIN_URL}?command=broadcast&message=Selamat+datang+ke+SPIMF+System`
+            ];
+            
+            console.log('Admin Commands for testing:');
+            commands.forEach(cmd => console.log(cmd));
+        }
+
+        // Initialize system
         document.addEventListener('DOMContentLoaded', function() {
-            updateTime();
+            // Load saved state
+            const savedState = localStorage.getItem('spimf_member_state');
+            if (savedState) {
+                systemState = { ...systemState, ...JSON.parse(savedState) };
+            }
+            
+            // Initial checks
+            checkUrlParameters();
+            checkSystemTime();
+            updateSystemDisplay();
+            
+            // Start sync interval
+            setInterval(syncWithAdmin, CONFIG.SYNC_INTERVAL);
+            setInterval(checkSystemTime, 60000); // Check time every minute
+            
+            // Generate test commands
+            generateAdminCommand();
+            
+            showNotification('Sistem ahli berjaya dimuatkan!', 'success');
+        });
+
+        // Save state before unload
+        window.addEventListener('beforeunload', function() {
+            localStorage.setItem('spimf_member_state', JSON.stringify(systemState));
         });
     </script>
 </body>
